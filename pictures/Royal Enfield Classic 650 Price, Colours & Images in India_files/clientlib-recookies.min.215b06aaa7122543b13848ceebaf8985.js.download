@@ -1,0 +1,108 @@
+function handleCookieConsent() {
+  try {
+    console.log("Cookies");
+
+    function setCookie(name, value, days) {
+      const date = new Date();
+      date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
+      const expires = "expires=" + date.toUTCString();
+      document.cookie = name + "=" + value + ";" + expires + ";path=/";
+    }
+
+    function getCookie(name) {
+      const cname = name + "=";
+      const decodedCookie = decodeURIComponent(document.cookie);
+      const ca = decodedCookie.split(";");
+      for (let c of ca) {
+        while (c.charAt(0) === " ") c = c.substring(1);
+        if (c.indexOf(cname) === 0) return c.substring(cname.length, c.length);
+      }
+      return "";
+    }
+
+    const cookieConsent = getCookie("cookieConsent");
+    const banner = document.getElementById("cookie-banner");
+    const pageType = document.title;
+
+    // Show banner only if cookieConsent is not set
+    if (!cookieConsent) {
+      document.querySelector(".recookies").style.display = "block";
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overflowY = "hidden";
+      document.body.classList.add("re-cookies");
+      // Data Layer: popup visible
+      dataLayer.push({
+        event: "cookieConsentComponent",
+        eventCategory: "cookieConsentComponent",
+        eventAction: "popup_visible",
+        pageType: pageType,
+      });
+    }
+
+    if (cookieConsent === "accepted") {
+      document.querySelector(".recookies").style.display = "none";
+      document.body.style.overflowY = "visible";
+      document.documentElement.style.overflowY = "visible";
+      document.body.classList.remove("re-cookies");
+    }
+
+    // Accept CTA
+    document.querySelector(".accept").addEventListener("click", () => {
+      setCookie("cookieConsent", "accepted", 90);
+      document.body.style.overflowY = "visible";
+      document.documentElement.style.overflowY = "visible";
+      document.querySelector(".recookies").style.display = "none";
+      document.body.classList.remove("re-cookies");
+
+      // Data Layer: Accept clicked
+      dataLayer.push({
+        event: "cookieConsentComponent",
+        eventCategory: "cookieConsentComponent",
+        eventAction: "Accept",
+        pageType: pageType,
+      });
+    });
+
+    // Decline CTA
+    document.querySelector(".decline").addEventListener("click", () => {
+      document.querySelector(".recookies").style.display = "none";
+      document.body.style.overflowY = "visible";
+      document.documentElement.style.overflowY = "visible";
+      document.body.classList.remove("re-cookies");
+
+      // Data Layer: Decline clicked
+      dataLayer.push({
+        event: "cookieConsentComponent",
+        eventCategory: "cookieConsentComponent",
+        eventAction: "Decline",
+        pageType: pageType,
+      });
+    });
+
+    // Privacy/Policy Link Clicks
+    document.querySelectorAll(".cookie-text a").forEach((link) => {
+      link.addEventListener("click", (e) => {
+        const ctaText = link.textContent.trim();
+        const nextPagePath = link.getAttribute("href");
+
+        dataLayer.push({
+          event: "cookieConsentComponent",
+          eventCategory: "cookieConsentComponent",
+          eventAction: ctaText,
+          eventLabel: nextPagePath,
+          pageType: pageType,
+        });
+      });
+    });
+  } catch (error) {
+    console.log(error);
+  }
+}
+
+handleCookieConsent();
+
+// if (document.readyState === "loading") {
+//   document.addEventListener("DOMContentLoaded", handleCookieConsent);
+// } else {
+//   handleCookieConsent();
+// }

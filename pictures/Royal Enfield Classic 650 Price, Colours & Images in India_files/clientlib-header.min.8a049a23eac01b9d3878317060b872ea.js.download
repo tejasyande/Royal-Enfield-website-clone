@@ -1,0 +1,1828 @@
+document.addEventListener('DOMContentLoaded', () => {
+    try {
+
+        ["header_container_grids", "rides", "motoculture", "explore"].forEach(function (id) {
+            const element = document.getElementById(id);
+            if (element && element.parentElement) {
+                element.parentElement.classList.add("header_container_and_grid");
+            }
+        });
+    } catch (error) {
+        console.log(error)
+    }
+})
+function init() {
+  // NEW: State synchronization function to run immediately
+  const synchronizeCountryState = () => {
+    try {
+      // 1. Get the current country code from the URL
+      let urlCountryCode = null;
+      const pathParts = window.location.pathname.split("/");
+      if (pathParts.length > 1 && pathParts[1]) {
+        urlCountryCode = pathParts[1].toLowerCase();
+      }
+
+      // 2. Get the saved country data from localStorage
+      const savedLanguageData = localStorage.getItem("availableLanguages");
+      if (!savedLanguageData) {
+        return; // Nothing saved, so nothing to sync
+      }
+
+      // 3. Compare and clear if there is a mismatch
+      const languageData = JSON.parse(savedLanguageData);
+      let savedCountryCode = null;
+      if (languageData.defaultUrl) {
+        const savedUrlParts = languageData.defaultUrl.split("/");
+        if (savedUrlParts.length > 1 && savedUrlParts[1]) {
+          savedCountryCode = savedUrlParts[1].toLowerCase();
+        }
+      }
+
+      if (
+        urlCountryCode &&
+        savedCountryCode &&
+        urlCountryCode !== savedCountryCode
+      ) {
+        console.log("URL/localStorage mismatch detected. Clearing stale data.");
+        localStorage.removeItem("availableLanguages");
+        localStorage.removeItem("countryNameToast"); // This is the crucial part
+        localStorage.removeItem("languageStripDismissed");
+      }
+    } catch (error) {
+      console.error("Error during country state synchronization:", error);
+    }
+  };
+
+  // RUN THE SYNCHRONIZATION FIRST!
+  synchronizeCountryState();
+
+  try {
+    const updateCountrySelector = () => {
+      const langDropdown = document.querySelector(
+        ".re-revamp-v4-header__language-dropdown"
+      );
+
+      if (!langDropdown) {
+        return;
+      }
+      const countryItems = document.querySelectorAll(".country-item");
+
+      function updateDropdownButtonText(countryName, countryCode) {
+        langDropdown.textContent =
+          countryName?.toUpperCase().slice(0, 2) ||
+          countryCode?.toUpperCase().slice(0, 2) ||
+          "IN";
+      }
+
+      // 1. Get country code from URL
+      let urlCountryCode = null;
+      try {
+        const pathParts = window.location.pathname.split("/");
+        if (pathParts.length > 1 && pathParts[1]) {
+          urlCountryCode = pathParts[1].toLowerCase();
+        }
+      } catch (error) {
+        console.error("Error extracting country code from URL:", error);
+      }
+
+      // 2. Check localStorage for previously selected country
+      const savedLanguageData = localStorage.getItem("availableLanguages");
+      let savedCountryCodeFromLS = null;
+      let savedCountryNameFromLS = null;
+      if (savedLanguageData) {
+        try {
+          const languageData = JSON.parse(savedLanguageData);
+          savedCountryCodeFromLS = languageData.countryCode?.toLowerCase();
+          savedCountryNameFromLS = languageData.country;
+        } catch (error) {
+          console.error("Error parsing saved language data:", error);
+        }
+      }
+
+      // 3. Set the dropdown text based on priority: URL > localStorage > Default
+      if (urlCountryCode) {
+        const foundItem = Array.from(countryItems).find((item) => {
+          try {
+            const link = item.querySelector("a");
+            if (link && link.dataset.availableLanguages) {
+              const languageData = JSON.parse(
+                link.dataset.availableLanguages.replace(/(\w+):/g, '"$1":')
+              );
+              if (languageData.defaultUrl) {
+                const dataUrlParts = languageData.defaultUrl.split("/");
+                if (dataUrlParts.length > 1 && dataUrlParts[1]) {
+                  return dataUrlParts[1].toLowerCase() === urlCountryCode;
+                }
+              }
+              return languageData.countryCode?.toLowerCase() === urlCountryCode;
+            }
+          } catch (error) {
+            // Silently catch parsing errors for individual items
+          }
+          return false;
+        });
+
+        if (foundItem) {
+          const link = foundItem.querySelector("a");
+          const languageData = JSON.parse(
+            link.dataset.availableLanguages.replace(/(\w+):/g, '"$1":')
+          );
+          updateDropdownButtonText(
+            languageData.country,
+            languageData.countryCode
+          );
+        } else {
+          updateDropdownButtonText(null, urlCountryCode);
+        }
+      } else if (savedCountryCodeFromLS) {
+        updateDropdownButtonText(
+          savedCountryNameFromLS,
+          savedCountryCodeFromLS
+        );
+      } else {
+        const defaultCountry = document.querySelector(
+          "#global .country-item a"
+        );
+        if (defaultCountry && defaultCountry.dataset.availableLanguages) {
+          try {
+            const languageData = JSON.parse(
+              defaultCountry.dataset.availableLanguages.replace(
+                /(\w+):/g,
+                '"$1":'
+              )
+            );
+            updateDropdownButtonText(
+              languageData.country,
+              languageData.countryCode
+            );
+            localStorage.setItem(
+              "availableLanguages",
+              JSON.stringify(languageData)
+            );
+          } catch (error) {
+            console.error("Error parsing default language data:", error);
+          }
+        }
+      }
+    };
+
+    document.addEventListener("DOMContentLoaded", updateCountrySelector);
+
+    window.addEventListener("load", function () {
+      updateCountrySelector();
+
+      const accordionHeaders = document.querySelectorAll(".accordion-header");
+      const languageToastNotification = document.querySelector(
+        ".language-toast-notification"
+      );
+      const countryNameToast = document.querySelector(".country-name-toast");
+      const countryItems = document.querySelectorAll(".country-item");
+      const searchInput = document.querySelector(".search-input");
+      const noResultsMessage = document.querySelector(".no-results-message");
+      const searchIcon = document.querySelector(".search-icon");
+      const searchIconClose = document.querySelector(".search-icon-close");
+      const closeBtn = document.querySelector(".close-btn--lang");
+      const langSelectotButton = document.querySelector(
+        ".re-revamp-v4-header__language-dropdown-container"
+      );
+
+      // Toast logic now runs AFTER the sanitizer has cleared any stale data
+      try {
+        const checkLocalStorage = localStorage.getItem("countryNameToast");
+        if (checkLocalStorage) {
+          languageToastNotification.style.display = "flex";
+          countryNameToast.textContent = checkLocalStorage;
+          setTimeout(() => {
+            languageToastNotification.style.display = "none";
+            localStorage.removeItem("countryNameToast");
+          }, 3000);
+        }
+      } catch (error) {
+        console.log("Error checking local storage:", error);
+      }
+
+      // Accordion toggle logic, etc. (The rest of the file remains the same)
+      accordionHeaders.forEach((header) => {
+        header.addEventListener("click", function () {
+          const accordionId = this.getAttribute("data-accordion");
+          const content = document.getElementById(accordionId);
+          const arrow = this.querySelector(".accordion-arrow");
+
+          if (noResultsMessage.style.display === "block") {
+            searchInput.value = "";
+            noResultsMessage.style.display = "none";
+            countryItems.forEach((item) => {
+              item.style.display = "flex";
+            });
+          }
+
+          document
+            .querySelector(".selector-content")
+            .classList.remove("no-search-found-accordian");
+
+          document.querySelectorAll(".accordion-content").forEach((item) => {
+            if (item.id !== accordionId) {
+              item.classList.remove("open");
+            }
+          });
+          document.querySelectorAll(".accordion-arrow").forEach((arr) => {
+            if (arr !== arrow) {
+              arr.classList.remove("open");
+            }
+          });
+
+          content.classList.toggle("open");
+          arrow.classList.toggle("open");
+        });
+      });
+
+      countryItems.forEach((item) => {
+        const link = item.querySelector("a");
+        if (link) {
+          link.addEventListener("click", function (e) {
+            e.preventDefault();
+          });
+        }
+
+        item.addEventListener("click", function (e) {
+          countryItems.forEach((country) => {
+            country.classList.remove("selected");
+          });
+          this.classList.add("selected");
+
+          dataLayer.push({
+            event: "countrySelectorComponent",
+            eventCategory: "countrySelectorComponent",
+            eventAction: this.getAttribute("data-country"),
+            pageType: document.title,
+          });
+
+          const link = this.querySelector("a");
+          if (link && link.dataset.availableLanguages) {
+            try {
+              const languageDataString = link.dataset.availableLanguages;
+              const languageData = JSON.parse(
+                languageDataString.replace(/(\w+):/g, '"$1":')
+              );
+
+              localStorage.setItem(
+                "availableLanguages",
+                JSON.stringify(languageData)
+              );
+              localStorage.setItem("countryNameToast", languageData.country);
+
+              if (languageData.defaultUrl) {
+                window.location.href = languageData.defaultUrl;
+              }
+            } catch (error) {
+              console.error("Error parsing language data:", error);
+            }
+          }
+        });
+      });
+
+      if (searchIconClose) searchIconClose.style.display = "none";
+
+      searchInput.addEventListener("input", function () {
+        const searchQuery = this.value.toLowerCase().trim();
+        if (searchQuery.length > 0) {
+          if (searchIcon) searchIcon.style.display = "none";
+          if (searchIconClose) searchIconClose.style.display = "block";
+        } else {
+          if (searchIcon) searchIcon.style.display = "block";
+          if (searchIconClose) searchIconClose.style.display = "none";
+        }
+
+        let resultsFound = false;
+        countryItems.forEach((item) => {
+          const countryName = item
+            .querySelector(".country-name")
+            .textContent.toLowerCase();
+          const normalizedCountry = countryName.toLowerCase();
+          const normalizedQuery = searchQuery.toLowerCase();
+
+          if (
+            (searchQuery.length <= 3 &&
+              normalizedCountry.startsWith(normalizedQuery)) ||
+            (searchQuery.length > 2 &&
+              normalizedCountry.includes(normalizedQuery))
+          ) {
+            item.style.display = "flex";
+            resultsFound = true;
+          } else {
+            item.style.display = "none";
+          }
+        });
+
+        if (searchQuery) {
+          document.querySelectorAll(".accordion-header").forEach((header) => {
+            header.style.display = "none";
+          });
+          document.querySelectorAll(".accordion-content").forEach((content) => {
+            content.classList.add("open");
+          });
+
+          if (!resultsFound) {
+            noResultsMessage.style.display = "block";
+            document.querySelector(".selector-content").style.display = "block";
+            document
+              .querySelector(".selector-content")
+              .classList.add("no-search-found-accordian");
+            document.querySelectorAll(".accordion-header").forEach((header) => {
+              header.style.display = "flex";
+            });
+          } else {
+            noResultsMessage.style.display = "none";
+            document.querySelector(".selector-content").style.display = "block";
+            document
+              .querySelector(".selector-content")
+              .classList.remove("no-search-found-accordian");
+          }
+        } else {
+          document.querySelectorAll(".accordion").forEach((accordion) => {
+            accordion.style.display = "block";
+          });
+          document.querySelectorAll(".accordion-header").forEach((header) => {
+            header.style.display = "flex";
+          });
+          document.querySelectorAll(".accordion-content").forEach((content) => {
+            content.classList.remove("open");
+          });
+          document.querySelectorAll(".accordion-arrow").forEach((arr) => {
+            arr.classList.remove("open");
+          });
+          noResultsMessage.style.display = "none";
+          document.querySelectorAll(".country-item").forEach((item) => {
+            item.style.display = "flex";
+          });
+          document
+            .querySelector(".selector-content")
+            .classList.remove("no-search-found-accordian");
+        }
+      });
+
+      if (searchIconClose) {
+        searchIconClose.addEventListener("click", function () {
+          searchInput.value = "";
+          document
+            .querySelector(".selector-content")
+            .classList.remove("no-search-found-accordian");
+          searchInput.dispatchEvent(new Event("input"));
+          document.querySelectorAll(".accordion-content").forEach((content) => {
+            content.classList.remove("open");
+          });
+          document.querySelectorAll(".accordion-arrow").forEach((arr) => {
+            arr.classList.remove("open");
+          });
+          searchInput.focus();
+        });
+      }
+
+      closeBtn.addEventListener("click", function () {
+        document.querySelector(".country-selector-container").style.display =
+          "none";
+        document
+          .querySelector(".selector-content")
+          .classList.remove("no-search-found-accordian");
+        searchInput.value = "";
+        searchInput.dispatchEvent(new Event("input"));
+        document.querySelectorAll(".accordion-content").forEach((content) => {
+          content.classList.remove("open");
+        });
+        document.querySelectorAll(".accordion-arrow").forEach((arr) => {
+          arr.classList.remove("open");
+        });
+        document.querySelector(
+          ".overlay-background-langselector"
+        ).style.display = "none";
+        document.documentElement.style.overflow = "visible";
+
+        document.body.classList.remove("location-open");
+      });
+
+      langSelectotButton.addEventListener("click", function () {
+        document.querySelector(".country-selector-container").style.display =
+          "block";
+        document.querySelector(
+          ".overlay-background-langselector"
+        ).style.display = "block";
+        localStorage.removeItem("languageStripDismissed");
+        document.documentElement.style.overflow = "hidden";
+        document.body.classList.add("location-open");
+      });
+    });
+  } catch (error) {
+    console.log("Error initializing language navigation:", error);
+  }
+}
+
+init();
+
+try {
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const languagePages = {
+            'english': '/en/home',
+            'spanish': '/es/inicio'
+        };
+
+        // Get the elements
+        const languageSelector = document.getElementById('language-selector');
+        const continueBtn = document.getElementById('continue-btn');
+        const closeBtn = document.getElementById('close-btn');
+        const languageStrip = document.getElementById('language-strip');
+        const statusMessage = document.getElementById('status-message');
+
+        // Check if we should display the language strip
+        function initLanguageStrip() {
+            // Get available languages from local storage
+            const availableLanguagesJSON = localStorage.getItem('availableLanguages');
+
+            if (!availableLanguagesJSON) {
+                // No language data found, hide strip
+                languageStrip.style.display = 'none';
+                return;
+            }
+
+            try {
+                const availableLanguages = eval('(' + availableLanguagesJSON + ')');
+
+                // Only show language strip if there are multiple languages
+                let countryDropdown = document.querySelector('.re-revamp-v4-header__language-dropdown');
+                countryDropdown.innerHTML = availableLanguages.country.substring(0, 2).toUpperCase();
+                if (availableLanguages.languages && availableLanguages.languages.length > 1) {
+                    // Update notification text with country name
+                    languageStrip.style.display = 'flex'
+                    const notificationText = document.querySelector('.notification-text');
+                    if (notificationText) {
+                        notificationText.textContent = `This website is available in multiple languages for ${availableLanguages.country}:`;
+
+
+                    }
+
+                    // Populate language selector
+                    languageSelector.innerHTML = '';
+                    availableLanguages.languages.forEach(lang => {
+                        console.log(lang);
+                        const option = document.createElement('option');
+                        option.value = lang.name.toLowerCase();
+                        option.textContent = lang.name;
+                        languageSelector.appendChild(option);
+
+                        // Add URLs to our mapping
+                        languagePages[lang.name.toLowerCase()] = lang.url;
+                    });
+
+                    // Set default language based on current URL path
+                    const currentPath = window.location.pathname;
+                    const currentLang = availableLanguages.languages.find(lang =>
+                        currentPath.startsWith(lang.url));
+
+                    if (currentLang) {
+                        languageSelector.value = currentLang.name.toLowerCase();
+                    }
+
+                    // Show the language strip
+
+
+                } else {
+                    languageStrip.style.display = 'none';
+
+                }
+            } catch (error) {
+                console.error('Error parsing available languages:', error);
+                languageStrip.style.display = 'none';
+
+            }
+        }
+
+        // Initialize the language strip
+        initLanguageStrip();
+
+        // Continue button redirects to selected language page
+        continueBtn.addEventListener('click', function () {
+            const selectedLanguage = languageSelector.value;
+            const targetUrl = languagePages[selectedLanguage];
+            localStorage.setItem('languageStripDismissed', 'true');
+            // change default language to selected language
+
+
+            if (targetUrl) {
+                // Redirect to the selected language page
+                window.location.href = targetUrl;
+            }
+        });
+
+        // Close button hides the language strip
+        closeBtn.addEventListener('click', function () {
+            languageStrip.style.display = 'none';
+
+
+            // Optionally, store the user's preference to not show the strip again
+            localStorage.setItem('languageStripDismissed', 'true');
+        });
+
+        // Check if language strip has been dismissed before showing
+        function checkDismissedStatus() {
+            const dismissed = localStorage.getItem('languageStripDismissed');
+            if (dismissed === 'true') {
+                languageStrip.style.display = 'none';
+
+            } else {
+                initLanguageStrip();
+
+            }
+        }
+
+
+
+
+        checkDismissedStatus();
+    });
+}
+catch (error) {
+    console.log('Error in langStrip.js:', error);
+}
+
+try {
+
+    function init() {
+        console.log("header is init");
+        const headerAccordianButton = document.querySelectorAll(
+            ".re-revamp-v4-header__mobile-menu span"
+        );
+        const actualMenuContent = document.querySelectorAll(
+            ".re-revamp-v4__accordion"
+        );
+        const menuButton = document.querySelector(
+            ".re-revamp-v4-header__mobile-menu"
+        );
+        const menuIcon = menuButton.querySelector(".menu-icon");
+        const closeIcon = menuButton.querySelector(".close-icon");
+
+        // Initially hide the close icon
+        closeIcon.style.display = "none";
+        menuIcon.style.display = "flex";
+
+        try {
+            document.querySelectorAll(".re-revamp-v4__accordion .cmp-accordion__button").forEach((elem, index) => {
+                elem.addEventListener("click", (e) => {
+                    setTimeout(() => {
+                        history.replaceState(null, null, " ");
+                    }, 0);
+                    console.log("click")
+                    document.querySelector(".re-revamp-v4-header__header-backdrop-transparent").classList.toggle("active")
+                });
+            });
+        } catch (error) {
+            console.log("error in url hash reset", error);
+        }
+
+        // Update the click event handler
+        menuButton.addEventListener("click", () => {
+            // Toggle menu content
+            actualMenuContent.forEach((menu) => {
+                menu.classList.toggle("is-active");
+                if (menu.classList.contains("is-active")) {
+                    document.documentElement.style.overflow = 'hidden';
+                    document.body.classList.add("new-header-mobile-panel")
+                } else {
+                    // Do something if the class is not present
+                    document.documentElement.style.overflow = 'visible';
+                    document.body.classList.remove("new-header-mobile-panel")
+                }
+            });
+
+            // Toggle icons
+            const isMenuOpen = actualMenuContent[0].classList.contains("is-active");
+            menuIcon.style.display = isMenuOpen ? "none" : "flex";
+            closeIcon.style.display = isMenuOpen ? "flex" : "none";
+
+            // Add or remove data-cmp-expanded attribute based on menu state
+            if (isMenuOpen) {
+                menuButton.setAttribute("data-cmp-expanded", "true");
+            } else {
+                menuButton.removeAttribute("data-cmp-expanded");
+            }
+        });
+
+        // desktop
+        // queryallselector -re-revamp-v4-header .re-revamp-v4__accordion cmp-accordion__button
+        // for each - item - click event -
+
+        if (window.innerWidth >= 1024) {
+            const desktopAccordionButtons = document.querySelectorAll(
+                ".re-revamp-v4-header .re-revamp-v4__accordion .cmp-accordion__button"
+            );
+
+            desktopAccordionButtons.forEach((button) => {
+                button.addEventListener("click", () => {
+                    setTimeout(() => {
+                        const childWithAriaExpanded = button.classList.contains('cmp-accordion__button--expanded');
+                        console.log(button);
+                        console.log(childWithAriaExpanded)
+                        if (childWithAriaExpanded) {
+                            // No child with aria-expanded="true" — set overflow hidden
+                            document.querySelector(".grab-ticket-card").classList.remove("show");
+                            document.body.style.overflow = "hidden";
+                            document.documentElement.style.overflow = "hidden";
+                            document.body.classList.add("new-header-panel-show");
+                            console.log("Hiding overflow because clicked element does NOT have expanded child");
+                        } else {
+                            // Child with aria-expanded="true" exists — remove overflow restriction
+                            document.querySelector(".grab-ticket-card").classList.add("show");
+                            document.body.style.overflow = "";
+                            document.documentElement.style.overflow = "";
+                            document.body.classList.remove("new-header-panel-show");
+                            console.log("Restoring overflow because clicked element HAS expanded child");
+                        }
+                    }, 300);
+                });
+            });
+
+        }
+        if (window.innerWidth <= 1024) {
+            const desktopAccordionButtons = document.querySelectorAll(
+                ".re-revamp-v4-header .re-revamp-v4__accordion .cmp-accordion__button"
+            );
+            const buttonWrapper = document.querySelector(
+                ".re-revamp-v4__button_wrapper"
+            );
+
+            desktopAccordionButtons.forEach((button) => {
+                button.addEventListener("click", () => {
+                    setTimeout(() => {
+                        const childWithAriaExpanded = button.classList.contains('cmp-accordion__button--expanded');
+                        console.log(button);
+                        console.log(childWithAriaExpanded);
+
+                        if (childWithAriaExpanded) {
+                            // No child with aria-expanded="true" — set overflow hidden
+                            buttonWrapper.style.position = "static";
+                        } else {
+                            // Child with aria-expanded="true" exists — remove overflow restriction
+                            buttonWrapper.style.position = "absolute";
+                        }
+                    }, 0);
+                });
+            });
+
+        }
+    }
+
+    init();
+} catch (error) {
+    console.error("Error in headerBreadcrumbs.js", error);
+}
+class MotorcycleApiService {
+  constructor() {
+    this.baseUrl = "/bin/re-platform/revamp/cf/api/v1/fetch";
+    this.cache = null;
+    this.buttonsInitialized = false;
+  }
+
+  async fetchMotorcycleData() {
+    if (this.cache) return this.cache;
+
+    try {
+      const sidebarContent = document.querySelector(
+        ".re-revamp-v4-sidebar-content"
+      );
+      if (!sidebarContent) {
+        throw new Error("Sidebar content element not found");
+      }
+
+      const rawData = sidebarContent.getAttribute("data-motorcycle-list");
+      if (!rawData) {
+        throw new Error("data-motorcycle-list attribute not found");
+      }
+
+      const motorcycleList = this.parseMotorcycleList(rawData);
+      console.log("Parsed motorcycle paths:", motorcycleList);
+
+      const response = await fetch(this.baseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          paths: motorcycleList,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("API response data:", data);
+      this.cache = this.transformApiData(data.data);
+      return this.cache;
+    } catch (error) {
+      console.error("Error fetching motorcycle data:", error);
+      return null;
+    }
+  }
+
+  parseMotorcycleList(rawData) {
+    try {
+      if (rawData.trim().startsWith("[")) {
+        return JSON.parse(rawData);
+      }
+
+      const cleaned = rawData
+        .replace(/^\[|\]$/g, "")
+        .replace(/^"|"$/g, "")
+        .trim();
+
+      if (cleaned.includes(",")) {
+        return cleaned
+          .split(",")
+          .map((item) => item.trim().replace(/^"|"$/g, ""))
+          .filter((item) => item.length > 0);
+      }
+
+      return [cleaned];
+    } catch (e) {
+      console.error("Error parsing motorcycle list:", e);
+      return [];
+    }
+  }
+
+  transformApiData(apiData) {
+    const categories = {};
+    if (!apiData || !Array.isArray(apiData)) {
+      console.error("Invalid API data format");
+      return categories;
+    }
+
+    apiData.forEach((item) => {
+      if (!item || !item.motorcycleCategory) {
+        console.warn("Skipping item with missing motorcycleCategory", item);
+        return;
+      }
+
+      try {
+        const category = this.getCategoryFromPath(item.motorcycleCategory);
+        if (!category) {
+          console.warn(
+            "Could not determine category for",
+            item.motorcycleCategory
+          );
+          return;
+        }
+        if (!categories[category]) {
+          categories[category] = [];
+        }
+
+        const bikeId = `${category}-${item.motorcycleName
+          .toLowerCase()
+          .replace(/\s+/g, "-")}-${Math.random().toString(36).substr(2, 4)}`;
+
+        categories[category].push({
+          id: bikeId,
+          name: item.motorcycleName,
+          category: this.formatCategoryName(category),
+          image: this.getFullImageUrl(item.motorcycleThumbnailImage),
+          fullImage: this.getFullImageUrl(item.motorcycleFullSizeImage),
+          price: item.motorcycleExShowroomPrice || "",
+          rawCategory: item.motorcycleCategory,
+          configurePath: item.configureMotorcyclePagePath || "",
+          modelId: item.motorcycleFamilyCode || "",
+        });
+      } catch (error) {
+        console.error("Error processing motorcycle item:", item, error);
+      }
+    });
+
+    return categories;
+  }
+
+  getFullImageUrl(imagePath) {
+    if (!imagePath) return "";
+    return imagePath.startsWith("http") ? imagePath : `${imagePath}`;
+  }
+
+  getCategoryFromPath(categoryPath) {
+    if (!categoryPath) return null;
+    const parts = categoryPath.split(/[:/]/);
+    const lastPart = parts[parts.length - 1];
+    return lastPart.toLowerCase();
+  }
+
+  formatCategoryName(category) {
+    return category.replace(/-/g, " ").toUpperCase();
+  }
+}
+
+const motorcycleApiService = new MotorcycleApiService();
+
+class HeaderMotorcycleClass {
+  constructor() {
+    this.bikesData = null;
+    this.activeCategory = null;
+    this.activeMotorcycleId = null;
+    this.isMobileView = window.innerWidth <= 1024;
+    this.testRideBaseUrl = '#'; // Property to hold the configurable URL
+    this.domElements = {
+      sidebarContent: null,
+      bikeSlider: null,
+      bikeName: null,
+      bikeBackground: null,
+      prevButton: null,
+      nextButton: null,
+      bookTestRideButton: null,
+    };
+
+    this.init();
+  }
+
+  async init() {
+    try {
+      this.bikesData = await motorcycleApiService.fetchMotorcycleData();
+
+      if (!this.bikesData || Object.keys(this.bikesData).length === 0) {
+        console.error("No data available from API.");
+        this.renderErrorMessage(
+          "Unable to load motorcycle data. Please try again later."
+        );
+        return;
+      }
+
+      this.cacheDomElements();
+      this.activateFirstMotorcycle();
+      this.renderAll();
+      this.setupEventListeners();
+    } catch (error) {
+      console.error("Error initializing motorcycle component:", error);
+      this.renderErrorMessage("Failed to initialize motorcycle component.");
+    }
+  }
+
+  activateFirstMotorcycle() {
+    const sortedCategories = Object.keys(this.bikesData).sort();
+
+    const firstCategory = sortedCategories.find(
+      (c) => this.bikesData[c] && this.bikesData[c].length > 0
+    );
+
+    if (firstCategory && this.bikesData[firstCategory].length > 0) {
+      this.activeCategory = firstCategory;
+      const firstBike = this.bikesData[firstCategory][0];
+      this.activeMotorcycleId = firstBike.id;
+    }
+  }
+
+  renderErrorMessage(message) {
+    const errorContainer = document.querySelector(".error-message-container");
+    if (errorContainer) {
+      errorContainer.textContent = message;
+      errorContainer.style.display = "block";
+    }
+  }
+
+  cacheDomElements() {
+    this.domElements.sidebarContent = document.querySelector(
+      ".re-revamp-v4-sidebar-content"
+    );
+
+    // Read the test ride URL from the data attribute
+    if (this.domElements.sidebarContent) {
+        this.testRideBaseUrl = this.domElements.sidebarContent.getAttribute('data-test-ride-url') || '/in/en/forms/book-a-test-ride/';
+    }
+
+    this.domElements.bikeSlider = document.querySelector(
+      ".re-revamp-v4-bike-slider"
+    );
+    this.domElements.bikeName = document.querySelector(
+      ".re-revamp-v4-bike-info h2"
+    );
+    this.domElements.bikeBackground = document.querySelector(
+      ".re-revamp-v4-bike-background"
+    );
+    this.domElements.prevButton = document.querySelector(
+      ".re-revamp-v4-prev-button"
+    );
+    this.domElements.nextButton = document.querySelector(
+      ".re-revamp-v4-next-button"
+    );
+    this.domElements.bookTestRideButton =
+      document.querySelector("#bookTestRideBtn");
+  }
+
+  renderAll() {
+    this.renderCategories();
+    this.renderSlider();
+    this.updateMotorcycleInfo();
+  }
+
+  renderCategories() {
+    if (!this.domElements.sidebarContent) return;
+
+    const categories = Object.keys(this.bikesData)
+      .filter(
+        (category) =>
+          this.bikesData[category] && this.bikesData[category].length > 0
+      )
+      .sort();
+
+    this.domElements.sidebarContent.innerHTML = categories
+      .map((category) => this.createCategoryHtml(category))
+      .join("");
+  }
+
+  createCategoryHtml(category) {
+    const isActive = category === this.activeCategory;
+    return `
+      <div class="re-revamp-v4-category">
+        <div class="re-revamp-v4-category-header ${isActive ? "active" : ""}" 
+             data-category="${category}">
+          <h3>${this.formatCategoryDisplayName(category)}</h3>
+          <span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8" fill="none">
+<path d="M10.59 0.589844L6 5.16984L1.41 0.589844L0 1.99984L6 7.99984L12 1.99984L10.59 0.589844Z" fill="white"/>
+</svg>
+          </span>
+        </div>
+        <div class="re-revamp-v4-category-content ${isActive ? "active" : ""}">
+          ${this.createMotorcycleThumbnailsHtml(category)}
+        </div>
+      </div>
+    `;
+  }
+
+  createMotorcycleThumbnailsHtml(category) {
+    let motorcycleHtml = "";
+
+    this.bikesData[category].forEach((bike) => {
+      const isActive = bike.id === this.activeMotorcycleId;
+
+      const shouldBeClickable = this.isMobileView && bike.configurePath;
+      const cardClickableClass = shouldBeClickable
+        ? "mobile-clickable-card"
+        : "";
+      const cardRedirectAttributes = shouldBeClickable
+        ? `data-redirect="${bike.configurePath}"`
+        : "";
+
+      motorcycleHtml += `
+        <div class="re-revamp-v4-bike-thumbnail ${
+          isActive ? "active" : ""
+        } ${cardClickableClass}" 
+          data-motorcycle="${bike.id}" 
+          data-category="${bike.rawCategory}"
+          ${cardRedirectAttributes}
+          aria-label="${bike.name}${
+        shouldBeClickable ? " - Click to view details" : ""
+      }">
+             <div class="img-box">
+               <img src="${bike.image}" alt="${bike.name}" loading="lazy">
+             </div>
+             <div class="re-revamp-v4-bike-name-box ${
+               isActive ? "active" : ""
+             }">
+              <h4 class="re-revamp-v4-bike-name ${isActive ? "active" : ""}">
+                <span>${bike.name}</span>
+              </h4>
+              <span class="arrow ${isActive ? "active" : ""}"></span>
+             </div>
+        </div>
+      `;
+    });
+
+    return motorcycleHtml;
+  }
+
+  formatCategoryDisplayName(category) {
+    return category.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+  }
+
+  renderSlider() {
+    if (!this.domElements.bikeSlider) return;
+
+    const allMotorcycles = [];
+
+    Object.values(this.bikesData).forEach((categoryBikes) => {
+      categoryBikes.forEach((bike) => {
+        allMotorcycles.push({
+          id: bike.id,
+          name: bike.name,
+          image: bike.fullImage || bike.image,
+          category: bike.category,
+          price: bike.price ? `₹ ${bike.price}` : "",
+          rawCategory: bike.rawCategory,
+        });
+      });
+    });
+
+    this.domElements.bikeSlider.innerHTML = allMotorcycles
+      .map((motorcycle) => this.createSliderItemHtml(motorcycle))
+      .join("");
+  }
+
+  createSliderItemHtml(motorcycle) {
+    const isActive = motorcycle.id === this.activeMotorcycleId;
+    return `
+      <div class="re-revamp-v4-bike-slider-item ${isActive ? "active" : ""}" 
+           data-motorcycle="${motorcycle.id}">
+        <img src="${motorcycle.image}" alt="${motorcycle.name}" loading="lazy">
+      </div>
+    `;
+  }
+
+  updateMotorcycleInfo() {
+    if (!this.activeMotorcycleId) return;
+
+    const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+    if (!motorcycle) return;
+
+    if (this.domElements.bikeName) {
+      this.domElements.bikeName.textContent = motorcycle.name;
+    }
+
+    if (this.domElements.bikeBackground) {
+      this.domElements.bikeBackground.textContent =
+        this.formatCategoryDisplayName(this.activeCategory);
+    }
+
+    this.updateExploreLink();
+    this.updateCtaButtons();
+  }
+
+  updateExploreLink() {
+    if (!this.activeMotorcycleId) return;
+
+    const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+    if (!motorcycle) return;
+
+    const exploreLink = document.querySelector(".dynamic-explore-link");
+    if (exploreLink && motorcycle.configurePath) {
+      exploreLink.href = motorcycle.configurePath;
+    }
+  }
+
+  updateCtaButtons() {
+    if (!this.activeMotorcycleId) return;
+
+    const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+    const btn = this.domElements.bookTestRideButton;
+
+    if (!motorcycle || !btn) return;
+
+    btn.removeAttribute("data-toggle");
+    btn.removeAttribute("data-target");
+
+    if (motorcycle.modelId && this.testRideBaseUrl) {
+      btn.setAttribute("href", `${this.testRideBaseUrl}?modelId=${motorcycle.modelId}`);
+    } else {
+      btn.setAttribute("href", this.testRideBaseUrl || "#");
+    }
+  }
+
+  handleViewportChange() {
+    const newIsMobileView = window.innerWidth <= 1024;
+
+    if (newIsMobileView !== this.isMobileView) {
+      this.isMobileView = newIsMobileView;
+      console.log(
+        `Viewport changed to: ${this.isMobileView ? "Mobile" : "Desktop"}`
+      );
+
+      this.renderCategories();
+    }
+  }
+
+  setupEventListeners() {
+    if (!this.buttonsInitialized) {
+      const configureBtn = document.getElementById("configure_now_header");
+      if (configureBtn) {
+        configureBtn.addEventListener("click", () => {
+          const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+          dataLayer.push({
+            event: "motorcycleComponent",
+            eventCategory: "motorcycleComponent",
+            eventAction: "Configure Now",
+            eventLabel: configureBtn.href,
+            modelName: "",
+            pageType: document.title,
+            sectionHeading: "Motorcycles",
+          });
+        });
+      }
+
+      const testRideBtn = document.getElementById("book_a_test_ride_header");
+      if (testRideBtn) {
+        testRideBtn.addEventListener("click", () => {
+          const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+          dataLayer.push({
+            event: "motorcycleComponent",
+            eventCategory: "motorcycleComponent",
+            eventAction: "Book a Test Ride",
+            eventLabel: testRideBtn.href,
+            modelName: "",
+            pageType: document.title,
+            sectionHeading: "Motorcycles",
+          });
+        });
+      }
+
+      this.buttonsInitialized = true;
+    }
+
+    const handleClick = (e) => {
+      const isMobileView = this.isMobileView;
+
+      if (isMobileView) {
+        const bikeCard = e.target.closest(
+          ".re-revamp-v4-bike-thumbnail[data-redirect]"
+        );
+
+        if (bikeCard?.dataset?.redirect) {
+          const motorcycle = this.getMotorcycleById(
+            bikeCard.dataset.motorcycle
+          );
+
+          if (motorcycle) {
+            const category = motorcycle.rawCategory
+              ? this.getCategoryFromRawCategory(motorcycle.rawCategory)
+              : motorcycle.category.toLowerCase();
+
+            window.dataLayer.push({
+              event: "motorcycleComponent",
+              eventCategory: "motorcycleComponent",
+              eventAction: motorcycle.name,
+              eventLabel: category,
+              pageType: document.title,
+              sectionHeading: "Motorcycles",
+            });
+          }
+
+          e.preventDefault();
+          window.location.href = bikeCard.dataset.redirect;
+          return;
+        }
+      }
+
+      const footerButton = e.target.closest(".re-revamp-v4-footer-button");
+      if (footerButton) {
+        window.dataLayer.push({
+          event: "motorcycleComponent",
+          eventCategory: "motorcycleComponent",
+          eventAction: footerButton.querySelector("span").textContent.trim(),
+          eventLabel: footerButton.href,
+          pageType: document.title,
+          sectionHeading: "Motorcycles",
+        });
+        return;
+      }
+
+      const exploreLink = e.target.closest(".dynamic-explore-link");
+      if (exploreLink) {
+        const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+        if (motorcycle) {
+          window.dataLayer.push({
+            event: "motorcycleComponent",
+            eventCategory: "motorcycleComponent",
+            eventAction: "Explore",
+            eventLabel: exploreLink.href,
+            modelName: motorcycle.name,
+            pageType: document.title,
+            sectionHeading: "Motorcycles",
+          });
+        }
+        return;
+      }
+
+      const ctaButton = e.target.closest(".re-revamp-v4-cta-button");
+      if (ctaButton) {
+        const motorcycle = this.getMotorcycleById(this.activeMotorcycleId);
+        if (motorcycle) {
+          window.dataLayer.push({
+            event: "motorcycleComponent",
+            eventCategory: "motorcycleComponent",
+            eventAction: ctaButton.textContent.trim(),
+            eventLabel: ctaButton.href,
+            modelName: motorcycle.name,
+            pageType: document.title,
+            sectionHeading: "Motorcycles",
+          });
+        }
+        return;
+      }
+
+      const header = e.target.closest(".re-revamp-v4-category-header");
+      if (header) {
+        this.handleCategoryClick(header);
+        return;
+      }
+
+      const thumbnail = e.target.closest(".re-revamp-v4-bike-thumbnail");
+      if (thumbnail) {
+        if (!isMobileView || !thumbnail.hasAttribute("data-redirect")) {
+          this.handleMotorcycleClick(thumbnail);
+        }
+        return;
+      }
+    };
+
+    document.addEventListener("click", handleClick);
+
+    if (this.domElements.prevButton) {
+      this.domElements.prevButton.addEventListener("click", () =>
+        this.navigateMotorcycle("prev")
+      );
+    }
+    if (this.domElements.nextButton) {
+      this.domElements.nextButton.addEventListener("click", () =>
+        this.navigateMotorcycle("next")
+      );
+    }
+
+    let resizeTimeout;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        this.handleViewportChange();
+      }, 100);
+    });
+  }
+
+  handleCategoryClick(header) {
+    const category = header.dataset.category;
+    const isActive = header.classList.contains("active");
+
+    window.dataLayer.push({
+      event: "motorcycleComponent",
+      eventCategory: "motorcycleComponent",
+      eventAction: category,
+      pageType: document.title,
+      sectionHeading: "Motorcycles",
+    });
+
+    if (!isActive) {
+      document
+        .querySelectorAll(".re-revamp-v4-category-header")
+        .forEach((h) => {
+          if (h !== header) {
+            h.classList.remove("active");
+            h.nextElementSibling.classList.remove("active");
+          }
+        });
+
+      header.classList.add("active");
+      header.nextElementSibling.classList.add("active");
+      this.activeCategory = category;
+
+      const firstMotorcycle = header.nextElementSibling.querySelector(
+        ".re-revamp-v4-bike-thumbnail"
+      );
+      if (firstMotorcycle)
+        this.activateMotorcycle(firstMotorcycle.dataset.motorcycle);
+    }
+  }
+
+  handleMotorcycleClick(thumbnail) {
+    const motorcycleId = thumbnail.dataset.motorcycle;
+    const motorcycle = this.getMotorcycleById(motorcycleId);
+    let category = thumbnail.dataset.category;
+
+    if (category && category.includes("/")) {
+      category = category.split("/").pop();
+    }
+
+    if (motorcycle) {
+      window.dataLayer.push({
+        event: "motorcycleComponent",
+        eventCategory: "motorcycleComponent",
+        eventAction: motorcycle.name,
+        eventLabel: category,
+        pageType: document.title,
+        sectionHeading: "Motorcycles",
+      });
+    }
+    this.activateMotorcycle(thumbnail.dataset.motorcycle);
+  }
+
+  activateMotorcycle(motorcycleId) {
+    if (!motorcycleId || this.activeMotorcycleId === motorcycleId) return;
+    this.activeMotorcycleId = motorcycleId;
+
+    document.querySelectorAll(".re-revamp-v4-bike-thumbnail").forEach((el) => {
+      el.classList.toggle("active", el.dataset.motorcycle === motorcycleId);
+
+      const nameBox = el.querySelector(".re-revamp-v4-bike-name-box");
+      if (nameBox) {
+        nameBox.classList.toggle(
+          "active",
+          el.dataset.motorcycle === motorcycleId
+        );
+      }
+
+      const nameEl = el.querySelector(".re-revamp-v4-bike-name");
+      if (nameEl) {
+        nameEl.classList.toggle(
+          "active",
+          el.dataset.motorcycle === motorcycleId
+        );
+      }
+
+      const arrowEl = el.querySelector(".arrow");
+      if (arrowEl) {
+        arrowEl.classList.toggle(
+          "active",
+          el.dataset.motorcycle === motorcycleId
+        );
+      }
+    });
+
+    const currentActive = document.querySelector(
+      ".re-revamp-v4-bike-slider-item.active"
+    );
+    if (currentActive) {
+      currentActive.classList.remove("active");
+      currentActive.classList.add("prev");
+      setTimeout(() => currentActive.classList.remove("prev"), 800);
+    }
+
+    const newActive = document.querySelector(
+      `.re-revamp-v4-bike-slider-item[data-motorcycle="${motorcycleId}"]`
+    );
+    if (newActive) newActive.classList.add("active");
+
+    this.updateMotorcycleInfo();
+  }
+
+  animateMotorcycleInfoChange(name, category) {
+    if (!this.domElements.bikeName || !this.domElements.bikeBackground) return;
+
+    this.domElements.bikeName.style.transform = "translateY(10px)";
+    this.domElements.bikeName.style.opacity = "0";
+    this.domElements.bikeName.style.transition =
+      "transform 0.3s ease, opacity 0.3s ease";
+
+    setTimeout(() => {
+      this.domElements.bikeName.textContent = name;
+      this.domElements.bikeBackground.textContent = category;
+      this.domElements.bikeName.style.transform = "translateY(0)";
+      this.domElements.bikeName.style.opacity = "1";
+    }, 300);
+  }
+
+  navigateMotorcycle(direction) {
+    if (
+      !this.activeMotorcycleId ||
+      !this.bikesData ||
+      !this.bikesData[this.activeCategory]
+    ) {
+      return;
+    }
+
+    const allMotorcyclesInCategory = this.bikesData[this.activeCategory].map(
+      (bike) => bike.id
+    );
+
+    const currentIndex = allMotorcyclesInCategory.indexOf(
+      this.activeMotorcycleId
+    );
+    if (currentIndex === -1) return;
+
+    const newIndex =
+      direction === "prev"
+        ? (currentIndex - 1 + allMotorcyclesInCategory.length) %
+          allMotorcyclesInCategory.length
+        : (currentIndex + 1) % allMotorcyclesInCategory.length;
+
+    const newMotorcycleId = allMotorcyclesInCategory[newIndex];
+
+    if (!newMotorcycleId) return;
+
+    const motorcycle = this.getMotorcycleById(newMotorcycleId);
+
+    if (motorcycle) {
+      window.dataLayer.push({
+        event: "motorcycleComponent",
+        eventCategory: "motorcycleComponent",
+        eventAction: `${direction}_arrow_clicked`,
+        eventLabel: motorcycle.name,
+        pageType: document.title,
+        sectionHeading: "Motorcycles",
+      });
+    }
+
+    this.activateMotorcycle(newMotorcycleId);
+  }
+
+  getMotorcycleById(motorcycleId) {
+    return Object.values(this.bikesData)
+      .flat()
+      .find((bike) => bike.id === motorcycleId);
+  }
+
+  getCategoryFromRawCategory(rawCategory) {
+    if (!rawCategory) return null;
+    const parts = rawCategory.split(/[:/]/);
+    return parts[parts.length - 1].toLowerCase();
+  }
+}
+
+const HeaderMotorcycle = {
+  init: function () {
+    const headerMotorcycleComponent = new HeaderMotorcycleClass();
+  },
+};
+
+HeaderMotorcycle.init();
+
+/**
+ * Checks the URL for a 'modelId' query parameter on page load
+ * and opens the corresponding modal if found.
+ */
+function openModalFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const modelId = params.get("modelId");
+
+  if (modelId) {
+    const modalElement = document.getElementById(modelId);
+
+    if (modalElement) {
+      // NOTE: This example is for Bootstrap 5.
+      const modal = new bootstrap.Modal(modalElement);
+      modal.show();
+    }
+  }
+}
+
+document.addEventListener("DOMContentLoaded", openModalFromQuery);
+document.addEventListener("DOMContentLoaded", () => {
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  }
+
+  function decodeCookies(name) {
+    try {
+      let cookieData = getCookie(name);
+      if (!cookieData) return { user_id: null, refresh_token: null, jwt_token: null };
+      let decodeCookiesData = window.atob(cookieData).split("#");
+      return {
+        user_id: decodeCookiesData[0],
+        refresh_token: decodeCookiesData[1],
+        jwt_token: decodeCookiesData[2],
+      };
+    } catch (error) {
+      console.error("Error decoding cookies:", error);
+      return { user_id: null, refresh_token: null, jwt_token: null };
+    }
+  }
+
+  const loginButton = document.querySelector('.re__revamp-v4__logincta');
+  const loggedInDropdown = document.querySelector('.dropdown.loggedIn');
+  const jwtCookieName = loginButton?.getAttribute("sub-domain-cookie") || "jwt_token";
+  const { jwt_token } = decodeCookies(jwtCookieName);
+
+  if (jwt_token) {
+    if (loginButton) loginButton.style.display = 'none';
+    if (loggedInDropdown) loggedInDropdown.style.display = 'block';
+  } else {
+    if (loginButton) loginButton.style.display = 'block';
+    if (loggedInDropdown) loggedInDropdown.style.display = 'none';
+
+    if (loginButton) {
+      loginButton.addEventListener('click', function(e) {
+        e.preventDefault();
+        if (window.loginWithOtpComponent && typeof window.loginWithOtpComponent.showLoginModal === 'function') {
+          window.loginWithOtpComponent.showLoginModal();
+        } else {
+          console.error('loginWithOtpComponent.showLoginModal not found');
+        }
+      });
+    }
+  }
+
+  // --- START OF CORRECTED CODE ---
+  document.addEventListener('click', function (event) {
+    const dropdownToggle = event.target.closest('.dropdowntoggle');
+    const dropdownList = loggedInDropdown.querySelector('.dropdownlist');
+
+    // Only proceed if a dropdown toggle element was clicked
+    if (dropdownToggle) {
+      event.preventDefault();
+      const isVisible = dropdownList.style.display === 'block';
+      dropdownList.style.display = isVisible ? 'none' : 'block';
+    }
+  });
+  // --- END OF CORRECTED CODE ---
+});
+
+let windowWidth = window.innerWidth;
+let swiper2; // Declare Swiper instance globally
+const yourBreakpoint = 768; // Define breakpoint for responsive behavior
+
+window.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") {
+    const activeElement = document.activeElement;
+
+    if (activeElement) {
+      activeElement.blur(); // Remove focus → hides keyboard on mobile
+    }
+  }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const timelineContents = document.querySelectorAll(".timeline-content");
+
+  timelineContents.forEach((content) => {
+    const paragraph = content.querySelector("p");
+    const readMore = paragraph.querySelector(".read-more"); // Select "READ MORE" inside <p>
+
+    let fullText = paragraph.innerHTML.trim(); // Store full HTML content
+    let textOnly = paragraph.textContent.replace("READ MORE", "").trim(); // Remove "READ MORE" for word count
+    let words = textOnly.split(/\s+/); // Extract words from text content
+    let truncatedText = words.slice(0, 30).join(" ") + "..."; // Truncate after 30 words
+
+    // Apply truncation if text is longer than 50 words
+    if (words.length > 50) {
+      paragraph.innerHTML =
+        truncatedText + ` <span class="read-more">READ MORE</span>`; // Ensure "READ MORE" is always visible
+    } else {
+      if (readMore) {
+        readMore.style.display = "none";
+      }
+    }
+
+    let isExpanded = false;
+
+    if (readMore) {
+      readMore.addEventListener("click", (event) => {
+        event.stopPropagation(); // Prevents the click from bubbling up to the paragraph
+        if (!isExpanded) {
+          paragraph.innerHTML = fullText; // Restore full text
+          paragraph.querySelector(".read-more").textContent = "READ LESS"; // Change button text
+        } else {
+          paragraph.innerHTML =
+            truncatedText + ` <span class="read-more">READ MORE</span>`; // Restore truncated version
+        }
+        isExpanded = !isExpanded;
+      });
+    }
+  });
+});
+
+// Function to initialize Swiper based on the window width
+const initializeSwiper = () => {
+  const isSmallScreen = windowWidth <= yourBreakpoint;
+
+  // Define common Swiper parameters
+  const commonParams = {
+    loop: false,
+    speed: 900,
+    allowTouchMove: true,
+    navigation: {
+      nextEl: ".swiper-container--legacy .swiper-button-next",
+      prevEl: ".swiper-container--legacy .swiper-button-prev",
+    },
+    pagination: {
+      el: ".swiper-container--legacy .swiper-pagination",
+      clickable: true,
+      dynamicBullets: false,
+      dynamicMainBullets: 4,
+    },
+  };
+
+  // Specific parameters for small and large screens
+  const specificParams = isSmallScreen
+    ? {
+      effect: "slide",
+      direction: "horizontal",
+    }
+    : {
+      effect: "cards",
+      direction: "vertical",
+      speed: 900,
+      cardsEffect: {
+        rotate: 0,
+        perSlideRotate: 0,
+        perSlideOffset: 8,
+      },
+    };
+
+  // Merge common and specific parameters
+  const params = { ...commonParams, ...specificParams };
+
+  // Initialize Swiper or update the existing instance
+  if (swiper2) {
+    swiper2.destroy(true, true); // Destroy existing Swiper instance
+  }
+  swiper2 = new Swiper(".swiper-container--legacy .swiper", params);
+};
+
+// Add click event listeners for navigation buttons and initialize Swiper
+document.addEventListener("DOMContentLoaded", () => {
+  // Initialize Swiper once the DOM is fully loaded
+  initializeSwiper();
+
+  // const nextButton = document.querySelector(
+  //   ".swiper-container--legacy .swiper-button-next"
+  // );
+  // const prevButton = document.querySelector(
+  //   ".swiper-container--legacy .swiper-button-prev"
+  // );
+
+  // if (nextButton) {
+  //   nextButton.addEventListener('click', () => swiper2.slideNext());
+  // }
+  // if (prevButton) {
+  //   prevButton.addEventListener('click', () => swiper2.slidePrev());
+  // }
+});
+
+document
+  .querySelector(
+    ".re-revamp-v4-header .re-revamp-v4-header__header-backdrop-transparent"
+  )
+  ?.addEventListener("click", (e) => {
+    const expandedAccordionButton = document
+      .querySelector(
+        ".re-revamp-v4__accordion .cmp-accordion__button.cmp-accordion__button--expanded"
+      );
+    if (expandedAccordionButton) {
+      expandedAccordionButton.click();
+      document.querySelector(".re-revamp-v4-header__header-backdrop-transparent").classList.remove("active");
+    }
+  });
+document.addEventListener("DOMContentLoaded", function () {
+  // function getParents(elem, selector) {
+  //   const parents = [];
+  //   while (elem && elem !== document) {
+  //     elem = elem.parentNode;
+  //     if (!elem || elem.nodeType !== 1) continue;
+  //     if (!selector || elem.matches(selector)) {
+  //       parents.push(elem);
+  //     }
+  //   }
+  //   return parents;
+  // }
+
+  document
+    .querySelectorAll(
+      ".re-revamp-v4-header .re-revamp-v4-header-accordion-gallery > .re-revamp-v4-header-accordion-gallery__accordion-container > .cmp-accordion > .cmp-accordion__item > .cmp-accordion__header > .cmp-accordion__button"
+    )
+    .forEach((button) => {
+      button.addEventListener("click", function () {
+        //  const getParentsforHeader = getParents(button, ".cmp-accordion__item");
+        const getParentsforHeader = button
+          .closest(".cmp-accordion__item")
+          .parentElement.closest(".cmp-accordion__item")
+          .querySelector(".cmp-accordion__header").innerText;
+        console.log("getparents", getParentsforHeader);
+
+        console.log("button", button);
+        dataLayer.push({
+          event: `${getParentsforHeader.toLowerCase()}Component`,
+          eventCategory: `${getParentsforHeader.toLowerCase()}Component`,
+          eventAction: this.textContent.trim(),
+          pageType: document.title,
+          sectionHeading: getParentsforHeader,
+        });
+      });
+    });
+
+  document
+    .querySelectorAll(
+      ".re-revamp-v4-header .header_container_and_grid .cmp-teaser .cmp-teaser__content .cmp-teaser__title"
+    )
+    .forEach((button) => {
+      button.addEventListener("click", function () {
+        const getParentsforImage = button.parentElement
+          .closest(".cmp-accordion__item")
+          .querySelector(".cmp-accordion__header").innerText;
+        console.log("getparents", getParentsforImage);
+        console.log("button", button);
+        dataLayer.push({
+          event: `${getParentsforImage.toLowerCase()}Component`,
+          eventCategory: `${getParentsforImage.toLowerCase()}Component`,
+
+          eventAction: this.textContent.trim(),
+          eventLabel: this.closest(".cmp-teaser__link").href,
+          pageType: document.title,
+          sectionHeading: getParentsforImage,
+        });
+      });
+    });
+
+  document
+    .querySelectorAll(
+      ".re-revamp-v4-header .re-revamp-v4-header-accordion-gallery .cmp-teaser .cmp-teaser__content .cmp-teaser__title"
+    )
+    .forEach((title) => {
+      title.addEventListener("click", function () {
+        const getParentsforHeader = title.parentElement
+          .closest(".cmp-accordion__item")
+          .querySelector(".cmp-accordion__header").innerText;
+        console.log("teaser title clicked", title);
+        console.log("parent header", getParentsforHeader);
+        dataLayer.push({
+          event: "shopComponent",
+          eventCategory: "shopComponent",
+          eventAction: this.textContent.trim(),
+          eventLabel: this.closest(".cmp-teaser__link").href,
+          pageType: document.title,
+          sectionHeading: "Shop",
+        });
+      });
+    });
+  document
+    .querySelectorAll(
+      ".re-revamp-v4-header .header_container_and_grid .button .cmp-button .cmp-button__text"
+    )
+    .forEach((button) => {
+      button.addEventListener("click", function () {
+        const getParentsforImage = button.parentElement
+          .closest(".cmp-accordion__item")
+          .querySelector(".cmp-accordion__header").innerText;
+        console.log("getparents", getParentsforImage);
+        console.log("button", button);
+        dataLayer.push({
+          event: `${getParentsforImage.toLowerCase()}Component`,
+          eventCategory: `${getParentsforImage.toLowerCase()}Component`,
+          eventAction: this.textContent.trim(),
+          eventLabel: this.parentElement.href,
+          pageType: document.title,
+          sectionHeading: getParentsforImage,
+        });
+      });
+
+      (function () {
+        if (window.footerButtonHandlerAdded) {
+          console.log("Footer button handler already exists, skipping...");
+          return;
+        }
+
+        console.log("Adding footer button handler...");
+
+        document.addEventListener("click", function (event) {
+          const button = event.target.closest(
+            ".re-revamp-v4-header-accordion-gallery__footer-button"
+          );
+
+          if (button) {
+            event.stopPropagation();
+
+            console.log("footer button clicked", button);
+
+            dataLayer.push({
+              event: "shopComponent",
+              eventCategory: "shopComponent",
+              eventAction: button.textContent.trim(),
+              eventLabel: button.href || "",
+              pageType: document.title,
+              sectionHeading: "Shop",
+            });
+          }
+        });
+
+        window.footerButtonHandlerAdded = true;
+      })();
+
+      (function () {
+        if (window.locationHandlerAdded) {
+          return;
+        }
+        console.log("Adding location handler...");
+
+        document.addEventListener("click", function (event) {
+          const locationLink = event.target.closest(
+            ".re-revamp-v4-header .re-revamp-v4-header__option a[aria-label='Location']"
+          );
+          if (locationLink) {
+            console.log("location icon clicked", locationLink);
+            dataLayer.push({
+              event: "locationComponent",
+              eventCategory: "locationComponent",
+              eventAction: "loction_icon_clicked",
+              eventLabel: locationLink.href,
+              pageType: document.title,
+            });
+          }
+        });
+
+        window.locationHandlerAdded = true;
+      })();
+    });
+  document
+    .querySelector(
+      ".re-revamp-v4-header .re__revamp-v4__logincta.re__revamp-v4__login-with-otp"
+    )
+    .addEventListener("click", function () {
+      console.log("login icon clicked", this);
+      dataLayer.push({
+        event: "loginComponent",
+        eventCategory: "loginComponent",
+        eventAction: "login_icon_clicked",
+        pageType: document.title,
+      });
+    });
+});
+
